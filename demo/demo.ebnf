@@ -1,0 +1,29 @@
+// Copyright (c) 2013 Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+float		= . // http://golang.org/ref/spec#float_lit
+identifier	= . // ASCII letters, digits, "_". No front digit.
+imaginary	= . // http://golang.org/ref/spec#imaginary_lit
+integer		= . // http://golang.org/ref/spec#int_lit
+str		= . // http://golang.org/ref/spec#string_lit
+boolean		= "true" | "false" .
+
+andnot 	= "&^" .
+lsh 	= "<<" .
+rsh 	= ">>" .
+
+Expression = Term  { ( "^" | "|" | "-" | "+" ) Term } .
+ExpressionList = Expression { "," Expression } .
+Factor = [ "^" | "!" | "-" | "+" ] Operand .
+Literal = boolean
+	| float
+	| QualifiedIdent
+	| imaginary
+	| integer
+	| str .
+Term = Factor { ( andnot | "&" | lsh  | rsh | "%" | "/" | "*" ) Factor } .
+Operand = Literal
+        | QualifiedIdent "(" [ ExpressionList ] ")"
+        | "(" Expression ")" .
+QualifiedIdent = identifier [ "." identifier ] .
