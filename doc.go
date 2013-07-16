@@ -158,7 +158,7 @@ program can be compiled. Running it without arguments prints:
 
 	$
 
-Note: In the above output, nil items has been removed from the AST dump before
+Note: In the above output, nil items have been removed from the AST dump before
 printing.
 
 Demo
