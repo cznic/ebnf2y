@@ -184,13 +184,14 @@ func (j *job) checkTerminals(start string) {
 	return
 }
 
-func isAscii(s string) bool {
+func toAscii(s string) string {
+	var r []byte
 	for _, b := range s {
-		if !(b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z') {
-			return false
+		if b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' {
+			r = append(r, byte(b))
 		}
 	}
-	return true
+	return string(r)
 }
 
 func (j *job) str(expr ebnf.Expression) (s string) {
@@ -216,7 +217,7 @@ func (j *job) str(expr ebnf.Expression) (s string) {
 			return strconv.QuoteRune(rune(s[0]))
 		default:
 			hint := ""
-			if _, ok := j.literals[s]; ok && !isAscii(s) {
+			if _, ok := j.literals[s]; ok && toAscii(s) == "" {
 				hint = fmt.Sprintf(" /* %q */", s)
 			}
 			return fmt.Sprintf("%s%s", j.term2name[s], hint)
@@ -338,7 +339,7 @@ import (
 	j.inventName(j.tPrefix+"TOK", "")
 	a = a[:0]
 	for lit := range j.literals {
-		if len(lit) == 1 || isAscii(lit) {
+		if len(lit) == 1 || toAscii(lit) != "" {
 			continue
 		}
 
@@ -359,11 +360,12 @@ import (
 
 	a = a[:0]
 	for lit := range j.literals {
-		if len(lit) == 1 || !isAscii(lit) {
+		nm := toAscii(lit)
+		if len(lit) == 1 || nm == "" {
 			continue
 		}
 
-		name := j.inventName(j.tPrefix+strings.ToUpper(lit), "")
+		name := j.inventName(j.tPrefix+strings.ToUpper(nm), "")
 		j.term2name[lit] = name
 		a = append(a, name)
 	}
