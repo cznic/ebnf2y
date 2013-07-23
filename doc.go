@@ -1,3 +1,12 @@
+/*TODO
+
+-me name	Minimize EBNF. Attempt to reduce the number of
+		productions by simple algorithm which doesn't guarantee
+		a minimal result. Write the result to 'name'. Terminal
+		productions are not processed.
+
+*/
+
 /*
 
 ebnf2y converts EBNF grammars into yacc compatible skeleton .y files.

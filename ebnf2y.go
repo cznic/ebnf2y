@@ -6,12 +6,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"go/ast"
 	"io"
 	"log"
 	"os"
+	"path"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +29,13 @@ const (
 )
 
 var todo = strings.ToUpper("todo")
+
+func dbg(s string, va ...interface{}) {
+	_, fn, fl, _ := runtime.Caller(1)
+	fmt.Printf("%s:%d: ", path.Base(fn), fl)
+	fmt.Printf(s, va...)
+	fmt.Println()
+}
 
 type job struct {
 	grm            ebnf.Grammar
@@ -449,10 +459,286 @@ func _dump() {
 	return
 }
 
+func prodLen(expr ebnf.Expression) (y int) {
+	var f func(ebnf.Expression)
+	f = func(expr ebnf.Expression) {
+		switch x := expr.(type) {
+		case nil:
+			// nop
+		case ebnf.Sequence:
+			for _, v := range x {
+				f(v)
+			}
+		case ebnf.Alternative:
+			for _, v := range x {
+				f(v)
+			}
+		case *ebnf.Option:
+			f(x.Body)
+		case *ebnf.Group:
+			f(x.Body)
+		case *ebnf.Repetition:
+			f(x.Body)
+		case *ebnf.Name, *ebnf.Token, *ebnf.Range:
+			y++
+		default:
+			log.Fatalf("internal error %T(%#v)", x, x)
+		}
+	}
+	f(expr)
+	return
+}
+
+func unGroup(expr ebnf.Expression, safe bool) ebnf.Expression {
+	for {
+		if x, ok := expr.(*ebnf.Group); ok && (!safe || prodLen(x.Body) == 1) {
+			expr = x.Body
+			continue
+		}
+
+		break
+	}
+	return expr
+}
+
+func minEbnf(fname string, grm ebnf.Grammar) (b []byte) {
+	refs := map[string][]*ebnf.Expression{}
+	selfRefs := map[string]bool{}
+	f := func(string, *ebnf.Expression) {}
+	f = func(name string, expr *ebnf.Expression) {
+		switch x := (*expr).(type) {
+		case nil:
+			selfRefs[name] = true
+		case *ebnf.Token, *ebnf.Range:
+			// nop
+		case ebnf.Alternative:
+			for i := range x {
+				f(name, &x[i])
+			}
+		case ebnf.Sequence:
+			for i := range x {
+				f(name, &x[i])
+			}
+		case *ebnf.Repetition:
+			f(name, &x.Body)
+		case *ebnf.Option:
+			f(name, &x.Body)
+		case *ebnf.Group:
+			f(name, &x.Body)
+		case *ebnf.Name:
+			switch nm := x.String; nm == name {
+			case true:
+				selfRefs[name] = true
+			default:
+				refs[nm] = append(refs[nm], expr)
+			}
+		default:
+			log.Fatalf("internal error %T(%#v)", x, x)
+		}
+	}
+	for name, prod := range grm {
+		f(name, &prod.Expr)
+	}
+	for stable := false; !stable; {
+		stable = true
+		for name, prod := range grm {
+			ref := refs[name]
+			if len(ref) == 0 || len(ref) > 1 || selfRefs[name] ||
+				!ast.IsExported(name) {
+				if !(len(ref) != 0 && prodLen(prod.Expr) == 1) {
+					continue
+				}
+			}
+
+			for _, ref := range ref {
+				expr := prod.Expr
+				if _, ok := expr.(*ebnf.Token); ok {
+					continue
+				}
+
+				stable = false
+				delete(refs, name)
+				delete(grm, name)
+				*ref = &ebnf.Group{Body: prod.Expr}
+			}
+		}
+
+	}
+
+	file, err := os.Create(fname)
+	if err != nil {
+		log.Fatal(err)
+	}
+	a := []string{}
+	for name := range grm {
+		a = append(a, name)
+	}
+	sort.Strings(a)
+	var buf bytes.Buffer
+	fm := strutil.IndentFormatter(&buf, "\t")
+	g := (func(ebnf.Expression))(nil)
+	g = func(expr ebnf.Expression) {
+		expr = unGroup(expr, true)
+		switch x := expr.(type) {
+		case nil:
+			// nop
+		case ebnf.Sequence:
+			for stable := false; !stable; {
+				stable = true
+			L:
+				for i := 0; i < len(x); i++ {
+					v := x[i]
+					if xx, ok := v.(*ebnf.Group); ok {
+						if xxx, ok := xx.Body.(ebnf.Sequence); ok {
+							for _, v := range xxx {
+								if prodLen(v) != 1 {
+									continue L
+								}
+							}
+
+							stable = false
+							x = append(x[:i], x[i+1:]...)
+							for _, v := range xxx {
+								x = append(x[:i], append(ebnf.Sequence{0: v}, x[i:]...)...)
+								i++
+							}
+						}
+					}
+				}
+			}
+			for _, v := range x {
+				g(v)
+			}
+		case ebnf.Alternative:
+			for stable := false; !stable; {
+				stable = true
+				for i, v := range x {
+					if xx, ok := v.(*ebnf.Group); ok {
+						x[i] = xx.Body
+						stable = false
+					}
+				}
+				for i := 0; i < len(x); i++ {
+					if xx, ok := x[i].(*ebnf.Alternative); ok {
+						for _, v := range *xx {
+							x = append(x, v)
+						}
+						x = append(x[:i], x[i+1:]...)
+						stable = false
+					}
+				}
+			}
+			for i, v := range x {
+				switch i {
+				case 0:
+					fm.Format("\n ")
+					g(v)
+				default:
+					fm.Format("\n|")
+					g(v)
+				}
+			}
+		case *ebnf.Name:
+			fm.Format(" %s", x.String)
+		case *ebnf.Repetition:
+			switch prodLen(x.Body) {
+			case 1:
+				fm.Format(" {")
+			default:
+				fm.Format(" {%i\n")
+			}
+			g(unGroup(x.Body, false))
+			switch prodLen(x.Body) {
+			case 1:
+				fm.Format(" }")
+			default:
+				fm.Format("\n%u }")
+			}
+		case *ebnf.Group:
+			switch prodLen(x.Body) {
+			case 1:
+				fm.Format(" (")
+			default:
+				fm.Format(" (%i\n")
+			}
+			g(unGroup(x.Body, false))
+			switch prodLen(x.Body) {
+			case 1:
+				fm.Format(" )")
+			default:
+				fm.Format("\n%u )")
+			}
+		case *ebnf.Option:
+			switch prodLen(x.Body) {
+			case 1:
+				fm.Format(" [")
+			default:
+				fm.Format(" [%i\n")
+			}
+			g(unGroup(x.Body, false))
+			switch prodLen(x.Body) {
+			case 1:
+				fm.Format(" ]")
+			default:
+				fm.Format("\n%u ]")
+			}
+		case *ebnf.Token:
+			fm.Format(" %q", x.String)
+		case *ebnf.Range:
+			fm.Format(" %q … %q", x.Begin.String, x.End.String)
+		default:
+			log.Fatalf("%T(%#v)", x, x)
+		}
+	}
+	for _, name := range a {
+		fm.Format("%s =", name)
+		prod := grm[name].Expr
+		switch prodLen(prod) {
+		case 0:
+			fm.Format(" .\n")
+		default:
+			fm.Format("%i")
+			g(grm[name].Expr)
+			fm.Format(" .%u\n")
+		}
+	}
+	b = buf.Bytes()
+	c := func(o, n string) {
+		for {
+			l := len(b)
+			b = bytes.Replace(b, []byte(o), []byte(n), -1)
+			if len(b) == l {
+				return
+			}
+		}
+	}
+	c("|\n\t\t", "|\n\t")
+	c("|\n\t", "|")
+	c(" \n", "\n")
+	c("\t\n", "\n")
+	c("\n\n", "\n")
+	n, err := file.Write(b)
+	if n != len(b) {
+		log.Fatalf("%q: Short write", fname)
+	}
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = file.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return
+}
+
 func main() {
 	oStart := flag.String("start", "SourceFile", "Start production name.")
 	oOut := flag.String("o", "", "Output file. Stdout if left blank.")
 	oPrefix := flag.String("p", "", "Prefix for token names, eg. \"_\". Default blank.")
+	//TODO oMinEbnf := flag.String("me", "", `Minimize EBNF and write it to <arg>.`)
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -481,12 +767,26 @@ func main() {
 		log.Fatal(err)
 	}
 
+	//TODO
+	//if nm := *oMinEbnf; nm != "" {
+	//	b := minEbnf(nm, grm)
+	//	buf := bytes.NewReader(b)
+	//	grm, err = ebnf.Parse(nm, buf)
+	//	if err != nil {
+	//		log.Fatal(err)
+	//	}
+
+	//	if err := ebnf.Verify(grm, *oStart); err != nil {
+	//		log.Fatal(err)
+	//	}
+
+	//}
+
 	j := &job{
 		grm:     grm,
 		names:   map[string]bool{},
 		tPrefix: *oPrefix,
 	}
-
 	for _, name := range []string{
 		"break", "default", "func", "interface", "select",
 		"case", "defer", "go", "map", "struct",
