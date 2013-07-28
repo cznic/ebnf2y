@@ -6,7 +6,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -21,6 +20,7 @@ import (
 	"time"
 
 	"code.google.com/p/go.exp/ebnf"
+	"github.com/cznic/ebnfutil"
 	"github.com/cznic/strutil"
 )
 
@@ -38,14 +38,12 @@ func dbg(s string, va ...interface{}) {
 }
 
 type job struct {
-	grm            ebnf.Grammar
-	literals       map[string]bool
-	namedTerminals ebnf.Grammar
-	names          map[string]bool
-	nonTerminals   ebnf.Grammar
-	repetitions    map[string]bool
-	tPrefix        string
-	term2name      map[string]string
+	grm ebnfutil.Grammar
+	rep *ebnfutil.Report
+	names map[string]bool
+	repetitions map[string]bool
+	tPrefix     string
+	term2name   map[string]string
 }
 
 func (j *job) inventName(prefix, sep string) (s string) {
@@ -64,134 +62,23 @@ func (j *job) inventName(prefix, sep string) (s string) {
 		}
 	}
 }
-func (j *job) toBnf() {
-	bnf := ebnf.Grammar{}
-	j.repetitions = map[string]bool{}
 
-	var f func(string, ebnf.Expression, int) ebnf.Expression
-
-	add := func(name string, expr ebnf.Expression) (nm *ebnf.Name) {
-		j.names[name] = true
-		nm = &ebnf.Name{String: name}
-		bnf[name] = &ebnf.Production{
-			Name: nm,
-			Expr: f(name, expr, 0),
-		}
-		return
+func (j *job) toBnf(start string) {
+	var err error
+	j.grm, j.repetitions, err = j.grm.BNF(start, func(name string) string {
+		return j.inventName(name, sep)
+	})
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	f = func(name string, expr ebnf.Expression, nest int) ebnf.Expression {
-		nest++
-		switch x := expr.(type) {
-		case ebnf.Alternative:
-			if nest == 1 {
-				var y ebnf.Alternative
-				for _, v := range x {
-					y = append(y, f(name, v, nest))
-				}
-				return y
-			}
-
-			return add(j.inventName(name, sep), x)
-		case *ebnf.Group:
-			return add(j.inventName(name, sep), x.Body)
-		case *ebnf.Name:
-			return &ebnf.Name{String: x.String}
-		case *ebnf.Option:
-			return add(j.inventName(name, sep), ebnf.Alternative{
-				0: nil,
-				1: x.Body,
-			})
-		case *ebnf.Repetition:
-			newName := j.inventName(name, sep)
-			j.repetitions[newName] = true
-			return add(newName, ebnf.Alternative{
-				0: nil,
-				1: ebnf.Sequence{
-					0: &ebnf.Name{String: newName},
-					1: x.Body,
-				},
-			})
-		case *ebnf.Range:
-			return &ebnf.Range{
-				Begin: &ebnf.Token{String: x.Begin.String},
-				End:   &ebnf.Token{String: x.End.String},
-			}
-		case ebnf.Sequence:
-			var y ebnf.Sequence
-			for _, v := range x {
-				y = append(y, f(name, v, nest))
-			}
-			return y
-		case *ebnf.Token:
-			return &ebnf.Token{String: x.String}
-		case nil:
-			return nil
-		default:
-			log.Fatalf("internal error %T(%#v)", x, x)
-			panic("unreachable")
-		}
-	}
-
-	for name, prod := range j.grm {
-		add(name, prod.Expr)
-	}
-	j.grm = bnf
 }
 
 func (j *job) checkTerminals(start string) {
-	j.nonTerminals = ebnf.Grammar{}
-	j.namedTerminals = ebnf.Grammar{}
-	j.literals = map[string]bool{}
-	visited := map[*ebnf.Production]bool{}
-	var f func(interface{})
-
-	f = func(v interface{}) {
-		switch x := v.(type) {
-		case *ebnf.Production:
-			if x == nil || visited[x] {
-				return
-			}
-
-			visited[x] = true
-			nm := x.Name.String
-			if !ast.IsExported(nm) {
-				j.namedTerminals[nm] = x
-				return
-			}
-
-			j.nonTerminals[nm] = x
-			f(x.Expr)
-		case ebnf.Sequence:
-			for _, v := range x {
-				f(v)
-			}
-		case *ebnf.Repetition:
-			f(x.Body)
-		case *ebnf.Token:
-			j.literals[x.String] = true
-		case *ebnf.Name:
-			f(j.grm[x.String])
-		case ebnf.Alternative:
-			for _, v := range x {
-				f(v)
-			}
-		case *ebnf.Group:
-			f(x.Body)
-		case *ebnf.Option:
-			f(x.Body)
-		case nil:
-			// nop
-		case *ebnf.Range:
-			// nop
-		default:
-			log.Fatalf("internal error %T(%#v)", x, x)
-		}
-
+	var err error
+	j.rep, err = j.grm.Analyze(start)
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	f(j.grm[start])
-	return
 }
 
 func toAscii(s string) string {
@@ -227,7 +114,7 @@ func (j *job) str(expr ebnf.Expression) (s string) {
 			return strconv.QuoteRune(rune(s[0]))
 		default:
 			hint := ""
-			if _, ok := j.literals[s]; ok && toAscii(s) == "" {
+			if _, ok := j.rep.Literals[s]; ok && toAscii(s) == "" {
 				hint = fmt.Sprintf(" /* %q */", s)
 			}
 			return fmt.Sprintf("%s%s", j.term2name[s], hint)
@@ -329,7 +216,7 @@ import (
 `, todo, time.Now(), todo, todo, todo)
 	j.term2name = map[string]string{}
 	a := []string{}
-	for name := range j.namedTerminals {
+	for name := range j.rep.Tokens {
 		token := j.inventName(j.tPrefix+strings.ToUpper(name), "")
 		j.term2name[name] = token
 		a = append(a, token)
@@ -348,7 +235,7 @@ import (
 
 	j.inventName(j.tPrefix+"TOK", "")
 	a = a[:0]
-	for lit := range j.literals {
+	for lit := range j.rep.Literals {
 		if len(lit) == 1 || toAscii(lit) != "" {
 			continue
 		}
@@ -369,7 +256,7 @@ import (
 	}
 
 	a = a[:0]
-	for lit := range j.literals {
+	for lit := range j.rep.Literals {
 		nm := toAscii(lit)
 		if len(lit) == 1 || nm == "" {
 			continue
@@ -388,7 +275,7 @@ import (
 	}
 
 	a = a[:0]
-	for name := range j.nonTerminals {
+	for name := range j.rep.NonTerminals {
 		a = append(a, name)
 	}
 	sort.Strings(a)
@@ -459,281 +346,6 @@ func _dump() {
 	return
 }
 
-func prodLen(expr ebnf.Expression) (y int) {
-	var f func(ebnf.Expression)
-	f = func(expr ebnf.Expression) {
-		switch x := expr.(type) {
-		case nil:
-			// nop
-		case ebnf.Sequence:
-			for _, v := range x {
-				f(v)
-			}
-		case ebnf.Alternative:
-			for _, v := range x {
-				f(v)
-			}
-		case *ebnf.Option:
-			f(x.Body)
-		case *ebnf.Group:
-			f(x.Body)
-		case *ebnf.Repetition:
-			f(x.Body)
-		case *ebnf.Name, *ebnf.Token, *ebnf.Range:
-			y++
-		default:
-			log.Fatalf("internal error %T(%#v)", x, x)
-		}
-	}
-	f(expr)
-	return
-}
-
-func unGroup(expr ebnf.Expression, safe bool) ebnf.Expression {
-	for {
-		if x, ok := expr.(*ebnf.Group); ok && (!safe || prodLen(x.Body) == 1) {
-			expr = x.Body
-			continue
-		}
-
-		break
-	}
-	return expr
-}
-
-func minEbnf(fname string, grm ebnf.Grammar) (b []byte) {
-	refs := map[string][]*ebnf.Expression{}
-	selfRefs := map[string]bool{}
-	f := func(string, *ebnf.Expression) {}
-	f = func(name string, expr *ebnf.Expression) {
-		switch x := (*expr).(type) {
-		case nil:
-			selfRefs[name] = true
-		case *ebnf.Token, *ebnf.Range:
-			// nop
-		case ebnf.Alternative:
-			for i := range x {
-				f(name, &x[i])
-			}
-		case ebnf.Sequence:
-			for i := range x {
-				f(name, &x[i])
-			}
-		case *ebnf.Repetition:
-			f(name, &x.Body)
-		case *ebnf.Option:
-			f(name, &x.Body)
-		case *ebnf.Group:
-			f(name, &x.Body)
-		case *ebnf.Name:
-			switch nm := x.String; nm == name {
-			case true:
-				selfRefs[name] = true
-			default:
-				refs[nm] = append(refs[nm], expr)
-			}
-		default:
-			log.Fatalf("internal error %T(%#v)", x, x)
-		}
-	}
-	for name, prod := range grm {
-		f(name, &prod.Expr)
-	}
-	for stable := false; !stable; {
-		stable = true
-		for name, prod := range grm {
-			ref := refs[name]
-			if len(ref) == 0 || len(ref) > 1 || selfRefs[name] ||
-				!ast.IsExported(name) {
-				if !(len(ref) != 0 && prodLen(prod.Expr) == 1) {
-					continue
-				}
-			}
-
-			for _, ref := range ref {
-				expr := prod.Expr
-				if _, ok := expr.(*ebnf.Token); ok {
-					continue
-				}
-
-				stable = false
-				delete(refs, name)
-				delete(grm, name)
-				*ref = &ebnf.Group{Body: prod.Expr}
-			}
-		}
-
-	}
-
-	file, err := os.Create(fname)
-	if err != nil {
-		log.Fatal(err)
-	}
-	a := []string{}
-	for name := range grm {
-		a = append(a, name)
-	}
-	sort.Strings(a)
-	var buf bytes.Buffer
-	fm := strutil.IndentFormatter(&buf, "\t")
-	g := (func(ebnf.Expression))(nil)
-	g = func(expr ebnf.Expression) {
-		expr = unGroup(expr, true)
-		switch x := expr.(type) {
-		case nil:
-			// nop
-		case ebnf.Sequence:
-			for stable := false; !stable; {
-				stable = true
-			L:
-				for i := 0; i < len(x); i++ {
-					v := x[i]
-					if xx, ok := v.(*ebnf.Group); ok {
-						if xxx, ok := xx.Body.(ebnf.Sequence); ok {
-							for _, v := range xxx {
-								if prodLen(v) != 1 {
-									continue L
-								}
-							}
-
-							stable = false
-							x = append(x[:i], x[i+1:]...)
-							for _, v := range xxx {
-								x = append(x[:i], append(ebnf.Sequence{0: v}, x[i:]...)...)
-								i++
-							}
-						}
-					}
-				}
-			}
-			for _, v := range x {
-				g(v)
-			}
-		case ebnf.Alternative:
-			for stable := false; !stable; {
-				stable = true
-				for i, v := range x {
-					if xx, ok := v.(*ebnf.Group); ok {
-						x[i] = xx.Body
-						stable = false
-					}
-				}
-				for i := 0; i < len(x); i++ {
-					if xx, ok := x[i].(*ebnf.Alternative); ok {
-						for _, v := range *xx {
-							x = append(x, v)
-						}
-						x = append(x[:i], x[i+1:]...)
-						stable = false
-					}
-				}
-			}
-			for i, v := range x {
-				switch i {
-				case 0:
-					fm.Format("\n ")
-					g(v)
-				default:
-					fm.Format("\n|")
-					g(v)
-				}
-			}
-		case *ebnf.Name:
-			fm.Format(" %s", x.String)
-		case *ebnf.Repetition:
-			switch prodLen(x.Body) {
-			case 1:
-				fm.Format(" {")
-			default:
-				fm.Format(" {%i\n")
-			}
-			g(unGroup(x.Body, false))
-			switch prodLen(x.Body) {
-			case 1:
-				fm.Format(" }")
-			default:
-				fm.Format("\n%u }")
-			}
-		case *ebnf.Group:
-			switch prodLen(x.Body) {
-			case 1:
-				fm.Format(" (")
-			default:
-				fm.Format(" (%i\n")
-			}
-			g(unGroup(x.Body, false))
-			switch prodLen(x.Body) {
-			case 1:
-				fm.Format(" )")
-			default:
-				fm.Format("\n%u )")
-			}
-		case *ebnf.Option:
-			switch prodLen(x.Body) {
-			case 1:
-				fm.Format(" [")
-			default:
-				fm.Format(" [%i\n")
-			}
-			g(unGroup(x.Body, false))
-			switch prodLen(x.Body) {
-			case 1:
-				fm.Format(" ]")
-			default:
-				fm.Format("\n%u ]")
-			}
-		case *ebnf.Token:
-			fm.Format(" %q", x.String)
-		case *ebnf.Range:
-			fm.Format(" %q … %q", x.Begin.String, x.End.String)
-		default:
-			log.Fatalf("%T(%#v)", x, x)
-		}
-	}
-	for _, name := range a {
-		fm.Format("%s =", name)
-		prod := grm[name].Expr
-		switch prodLen(prod) {
-		case 0:
-			fm.Format(" .\n")
-		default:
-			fm.Format("%i")
-			g(grm[name].Expr)
-			fm.Format(" .%u\n")
-		}
-	}
-	b = buf.Bytes()
-	c := func(o, n string) {
-		for {
-			l := len(b)
-			b = bytes.Replace(b, []byte(o), []byte(n), -1)
-			if len(b) == l {
-				return
-			}
-		}
-	}
-	c("|\n\t\t", "|\n\t")
-	c("|\n\t", "|")
-	c(" \n", "\n")
-	c("\t\n", "\n")
-	c("\n\n", "\n")
-	n, err := file.Write(b)
-	if n != len(b) {
-		log.Fatalf("%q: Short write", fname)
-	}
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = file.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return
-}
-
 func main() {
 	oStart := flag.String("start", "SourceFile", "Start production name.")
 	oOut := flag.String("o", "", "Output file. Stdout if left blank.")
@@ -758,12 +370,12 @@ func main() {
 		}
 	}
 
-	grm, err := ebnf.Parse(in.Name(), in)
+	grm, err := ebnfutil.Parse(in.Name(), in)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err := ebnf.Verify(grm, *oStart); err != nil {
+	if err := grm.Verify(*oStart); err != nil {
 		log.Fatal(err)
 	}
 
@@ -809,7 +421,7 @@ func main() {
 		Expr: &ebnf.Name{String: *oStart},
 	}
 
-	j.toBnf()
+	j.toBnf(*oStart)
 	j.checkTerminals(start)
 	out := os.Stdout
 	if s := *oOut; s != "" {
