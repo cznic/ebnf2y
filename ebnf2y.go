@@ -6,12 +6,14 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"go/ast"
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path"
 	"runtime"
 	"sort"
@@ -347,13 +349,27 @@ func _dump() {
 }
 
 func main() {
-	oIE := flag.Uint("ie", 0, "Inline EBNF. 0: none, 1: used once, 2: all.")
-	oIY := flag.Uint("iy", 0, "Inline BNF (.y). 0: none, 1: used once, 2: all.")
+	oIE := flag.Uint("ie", 1, "Inline EBNF. 0: none, 1: used once, 2: all (illegal with -m).")
+	oIY := flag.Uint("iy", 1, "Inline BNF (.y). 0: none, 1: used once, 2: all (illegal with -m).")
+	oM := flag.Bool("m", false, "Magic: reduce yacc conflicts, maybe.")
+	oMBig := flag.Bool("M", false, "Like -m and report to stderr.")
 	oOE := flag.String("oe", "", "Pretty print EBNF to <arg> if non blank.")
 	oOut := flag.String("o", "", "Output file. Stdout if left blank.")
 	oPrefix := flag.String("p", "", "Prefix for token names, eg. \"_\". Default blank.")
 	oStart := flag.String("start", "SourceFile", "Start production name.")
 	flag.Parse()
+
+	if *oMBig {
+		*oM = true
+	}
+	if *oM {
+		switch {
+		case *oOut == "":
+			log.Fatal("'-m' requires using a named output file ('-o name').")
+		case *oIE > 1 || *oIY > 1:
+			log.Fatal("'-m' cannot be used with '-ie' > 1 or '-iy' > 1.")
+		}
+	}
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	if flag.NArg() > 1 {
@@ -455,7 +471,10 @@ func main() {
 	default:
 		log.Fatal("-ie: <arg> must be 0, 1 or 2")
 	}
-	j.checkTerminals(start)
+
+	tried := map[string]bool{}
+	log2 := log.New(os.Stderr, "[magic] ", 0)
+magic:
 	out := os.Stdout
 	if s := *oOut; s != "" {
 		if out, err = os.Create(s); err != nil {
@@ -464,6 +483,7 @@ func main() {
 	}
 
 	w := bufio.NewWriter(out)
+	j.checkTerminals(start)
 	if err = j.render(w, start); err != nil {
 		log.Fatal(err)
 	}
@@ -474,5 +494,55 @@ func main() {
 
 	if err = out.Close(); err != nil {
 		log.Fatal(err)
+	}
+
+	if !*oM {
+		return
+	}
+
+	cmd := exec.Command("go", "tool", "yacc", out.Name())
+	var yout bytes.Buffer
+	cmd.Stdout = &yout
+	if err = cmd.Run(); err != nil {
+		log.Fatalf("execuing 'go tool yacc': %v", err)
+	}
+
+	if *oMBig {
+		log2.Println("----")
+		a := strings.Split(yout.String(), "\n")
+		for _, v := range a {
+			log2.Println(v)
+		}
+	}
+	a := strings.Split(yout.String(), "\n")
+next:
+	for _, v := range a {
+		s := strings.TrimSpace(v)
+		if strings.HasPrefix(s, "rule ") && strings.HasSuffix(s, " never reduced") {
+			s = strings.TrimSpace(s[len("rule "):])
+			for i := range s {
+				switch c := s[i]; {
+				default:
+					log.Fatalf("internal error %#x", c)
+				case c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_':
+					// nop
+				case c == ':':
+					name := s[:i]
+					if tried[name] {
+						continue next
+					}
+
+					tried[name] = true
+					if err = j.grm.InlineOne(name, true); err != nil {
+						log.Fatal(err)
+					}
+
+					if *oMBig {
+						log2.Printf("Attempted to inline %q", name)
+					}
+					goto magic
+				}
+			}
+		}
 	}
 }

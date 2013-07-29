@@ -13,13 +13,16 @@ Usage:
 Options:
 
 	-ie number	Inline eligible EBNF productions:
-			  0: none (default)
-			  1: used once
-			  2: all
+			  0: none
+			  1: used once (default)
+			  2: all (cannot be used with -m)
 	-iy number	Inline eligible BNF (.y) productions:
-			  0: none (default)
-			  1: used once
-			  2: all
+			  0: none
+			  1: used once (default)
+			  2: all (cannot be used with -m)
+	-m		Magic: Attempt to reduce yacc conflicts rooted in never
+			  reduced rules.
+	-M		Like -m and write report to stderr.
 	-o name		Output file name. Stdout if left blank (default).
 	-oe name	Output pretty printed EBNF to <name>.
 	-p string	Prefix for token names, eg. "_". Default blank.
