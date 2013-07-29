@@ -38,9 +38,9 @@ func dbg(s string, va ...interface{}) {
 }
 
 type job struct {
-	grm ebnfutil.Grammar
-	rep *ebnfutil.Report
-	names map[string]bool
+	grm         ebnfutil.Grammar
+	rep         *ebnfutil.Report
+	names       map[string]bool
 	repetitions map[string]bool
 	tPrefix     string
 	term2name   map[string]string
@@ -163,11 +163,11 @@ func (j *job) ystr(expr ebnf.Expression, name, start string, rep int) (s string)
 		switch rep {
 		case 0:
 			return fmt.Sprintf("$$ = []%s(nil)", name)
-		case 1:
-			return fmt.Sprintf("$$ = append($1.([]%s), %s)", name, strings.Join(a[1:], ", "))
 		default:
-			log.Fatal("internal error")
-			panic("unreachable")
+			return fmt.Sprintf("$$ = append($1.([]%s), %s)", name, strings.Join(a[1:], ", "))
+			//default:
+			//	log.Fatal("internal error")
+			//	panic("unreachable")
 		}
 	case false:
 		switch len(a) {
@@ -347,10 +347,12 @@ func _dump() {
 }
 
 func main() {
-	oStart := flag.String("start", "SourceFile", "Start production name.")
+	oIE := flag.Uint("ie", 0, "Inline EBNF. 0: none, 1: used once, 2: all.")
+	oIY := flag.Uint("iy", 0, "Inline BNF (.y). 0: none, 1: used once, 2: all.")
+	oOE := flag.String("oe", "", "Pretty print EBNF to <arg> if non blank.")
 	oOut := flag.String("o", "", "Output file. Stdout if left blank.")
 	oPrefix := flag.String("p", "", "Prefix for token names, eg. \"_\". Default blank.")
-	//TODO oMinEbnf := flag.String("me", "", `Minimize EBNF and write it to <arg>.`)
+	oStart := flag.String("start", "SourceFile", "Start production name.")
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -379,20 +381,37 @@ func main() {
 		log.Fatal(err)
 	}
 
-	//TODO
-	//if nm := *oMinEbnf; nm != "" {
-	//	b := minEbnf(nm, grm)
-	//	buf := bytes.NewReader(b)
-	//	grm, err = ebnf.Parse(nm, buf)
-	//	if err != nil {
-	//		log.Fatal(err)
-	//	}
+	switch *oIE {
+	case 0:
+		// nop
+	case 1:
+		if err = grm.Inline(*oStart, false); err != nil {
+			log.Fatal(err)
+		}
+	case 2:
+		if err = grm.Inline(*oStart, true); err != nil {
+			log.Fatal(err)
+		}
+	default:
+		log.Fatal("-ie: <arg> must be 0, 1 or 2")
+	}
 
-	//	if err := ebnf.Verify(grm, *oStart); err != nil {
-	//		log.Fatal(err)
-	//	}
+	if fn := *oOE; fn != "" {
+		f, err := os.Create(fn)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-	//}
+		b := []byte(grm.String())
+		n, err := f.Write(b)
+		if n != len(b) || err != nil {
+			log.Fatal(err)
+		}
+
+		if err = f.Close(); err != nil {
+			log.Fatal(err)
+		}
+	}
 
 	j := &job{
 		grm:     grm,
@@ -422,6 +441,20 @@ func main() {
 	}
 
 	j.toBnf(*oStart)
+	switch *oIY {
+	case 0:
+		// nop
+	case 1:
+		if err = j.grm.Inline(*oStart, false); err != nil {
+			log.Fatal(err)
+		}
+	case 2:
+		if err = j.grm.Inline(*oStart, true); err != nil {
+			log.Fatal(err)
+		}
+	default:
+		log.Fatal("-ie: <arg> must be 0, 1 or 2")
+	}
 	j.checkTerminals(start)
 	out := os.Stdout
 	if s := *oOut; s != "" {
