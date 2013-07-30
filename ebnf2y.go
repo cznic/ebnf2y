@@ -348,10 +348,58 @@ func _dump() {
 	return
 }
 
+func scoreN(s string, a []string) (y int) {
+	if len(a) == 0 {
+		log.Fatal("internal error")
+	}
+
+	sn := a[0]
+	if len(sn) == 0 {
+		log.Fatal("internal error")
+	}
+
+	if len(sn) == len(s) {
+		return -1
+	}
+
+	i := len(sn)
+	k := 1
+	for i > 0 {
+		switch c := sn[i-1]; {
+		case c < '0' || c > '9':
+			return
+		default:
+			y += k * (int(c) - '0')
+			k *= 10
+			i--
+		}
+	}
+	return
+}
+
+func score(fn string) (y int) {
+	cmd := exec.Command("go", "tool", "yacc", fn)
+	var yout bytes.Buffer
+	cmd.Stdout = &yout
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("execuing 'go tool yacc': %v", err)
+	}
+
+	s := yout.String()
+	a := strings.Split(s, " shift/reduce")
+	y = scoreN(s, a)
+	if y < 0 {
+		return
+	}
+
+	a = strings.Split(s, " reduce/reduce")
+	return y + scoreN(s, a)
+}
+
 func main() {
-	oIE := flag.Uint("ie", 1, "Inline EBNF. 0: none, 1: used once, 2: all (illegal with -m).")
-	oIY := flag.Uint("iy", 1, "Inline BNF (.y). 0: none, 1: used once, 2: all (illegal with -m).")
-	oM := flag.Bool("m", false, "Magic: reduce yacc conflicts, maybe.")
+	oIE := flag.Uint("ie", 0, "Inline EBNF. 0: none, 1: used once, 2: all (illegal with -m).")
+	oIY := flag.Uint("iy", 0, "Inline BNF (.y). 0: none, 1: used once, 2: all (illegal with -m).")
+	oM := flag.Bool("m", false, "Magic: reduce yacc conflicts, maybe (slow).")
 	oMBig := flag.Bool("M", false, "Like -m and report to stderr.")
 	oOE := flag.String("oe", "", "Pretty print EBNF to <arg> if non blank.")
 	oOut := flag.String("o", "", "Output file. Stdout if left blank.")
@@ -472,30 +520,82 @@ func main() {
 		log.Fatal("-ie: <arg> must be 0, 1 or 2")
 	}
 
-	tried := map[string]bool{}
-	log2 := log.New(os.Stderr, "[magic] ", 0)
-magic:
-	out := os.Stdout
-	if s := *oOut; s != "" {
-		if out, err = os.Create(s); err != nil {
+	var out *os.File
+	emit := func() {
+		n0 := map[string]bool{}
+		for name := range j.names {
+			n0[name] = true
+		}
+		out = os.Stdout
+		if s := *oOut; s != "" {
+			if out, err = os.Create(s); err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		w := bufio.NewWriter(out)
+		j.checkTerminals(start)
+		if err = j.render(w, start); err != nil {
 			log.Fatal(err)
+		}
+
+		if err = w.Flush(); err != nil {
+			log.Fatal(err)
+		}
+
+		if err = out.Close(); err != nil {
+			log.Fatal(err)
+		}
+		j.names = n0
+	}
+
+	log2 := log.New(os.Stderr, "[magic] ", 0)
+	tried := map[string]bool{}
+magic:
+	emit()
+	if !*oM {
+		return
+	}
+
+	g0 := j.grm.Normalize()
+	bestName := ""
+	best0 := score(out.Name())
+	var best int
+	if best0 < 0 {
+		goto magic2
+	}
+
+	best = best0
+	for name := range j.grm {
+		g1 := g0.Normalize()
+		if err = g1.InlineOne(name, true); err != nil {
+			log.Fatal(err)
+		}
+
+		j.grm = g1
+		emit()
+		if n := score(out.Name()); n >= 0 && n < best {
+			best = n
+			bestName = name
+			if *oMBig {
+				log2.Printf("%q: %d", bestName, best)
+			}
 		}
 	}
 
-	w := bufio.NewWriter(out)
-	j.checkTerminals(start)
-	if err = j.render(w, start); err != nil {
-		log.Fatal(err)
-	}
+	j.grm = g0
+	if best < best0 {
+		if g0.InlineOne(bestName, true); err != nil {
+			log.Fatal(err)
+		}
 
-	if err = w.Flush(); err != nil {
-		log.Fatal(err)
+		log2.Printf("Inlined %q: conflicts %d -> %d", bestName, best0, best)
+		goto magic
 	}
+	emit()
 
-	if err = out.Close(); err != nil {
-		log.Fatal(err)
-	}
-
+magic2:
+	emit()
 	if !*oM {
 		return
 	}
@@ -504,12 +604,12 @@ magic:
 	var yout bytes.Buffer
 	cmd.Stdout = &yout
 	if err = cmd.Run(); err != nil {
-		log.Fatalf("execuing 'go tool yacc': %v", err)
+		log.Fatalf("executing 'go tool yacc': %v", err)
 	}
 
 	if *oMBig {
 		log2.Println("----")
-		a := strings.Split(yout.String(), "\n")
+		a := strings.Split(strings.TrimSpace(yout.String()), "\n")
 		for _, v := range a {
 			log2.Println(v)
 		}
@@ -537,10 +637,7 @@ next:
 						log.Fatal(err)
 					}
 
-					if *oMBig {
-						log2.Printf("Attempted to inline %q", name)
-					}
-					goto magic
+					goto magic2
 				}
 			}
 		}
