@@ -549,7 +549,7 @@ func main() {
 		j.names = n0
 	}
 
-	log2 := log.New(os.Stderr, "[magic] ", 0)
+	log2 := log.New(os.Stderr, "[-M] ", 0)
 	tried := map[string]bool{}
 magic:
 	emit()
@@ -589,7 +589,9 @@ magic:
 			log.Fatal(err)
 		}
 
-		log2.Printf("Inlined %q: conflicts %d -> %d", bestName, best0, best)
+		if *oMBig {
+			log2.Printf("Inlined %q: conflicts %d -> %d", bestName, best0, best)
+		}
 		goto magic
 	}
 	emit()
