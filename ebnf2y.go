@@ -355,11 +355,11 @@ func scoreN(s string, a []string) (y int) {
 
 	sn := a[0]
 	if len(sn) == 0 {
-		log.Fatal("internal error")
+		return 0
 	}
 
 	if len(sn) == len(s) {
-		return -1
+		return 0
 	}
 
 	i := len(sn)
@@ -388,10 +388,6 @@ func score(fn string) (y int) {
 	s := yout.String()
 	a := strings.Split(s, " shift/reduce")
 	y = scoreN(s, a)
-	if y < 0 {
-		return
-	}
-
 	a = strings.Split(s, " reduce/reduce")
 	return y + scoreN(s, a)
 }
@@ -561,7 +557,7 @@ magic:
 	bestName := ""
 	best0 := score(out.Name())
 	var best int
-	if best0 < 0 {
+	if best0 <= 0 {
 		goto magic2
 	}
 
@@ -574,7 +570,7 @@ magic:
 
 		j.grm = g1
 		emit()
-		if n := score(out.Name()); n >= 0 && n < best {
+		if n := score(out.Name()); n < best {
 			best = n
 			bestName = name
 			if *oMBig {
