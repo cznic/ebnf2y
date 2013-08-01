@@ -20,12 +20,16 @@ Options:
 			  0: none (default)
 			  1: used once
 			  2: all (cannot be used with -m)
-	-m		Magic: Attempt to reduce yacc conflicts (slow).
+	-m		Magic: Attempt to to minimize yacc conflicts,
+			  by finding a minimum of wr*RR+ws*SR
+			  (wr*reducereduce+ws*shiftreduce conflicts).
 	-M		Like -m and write report to stderr.
 	-o name		Output file name. Stdout if left blank (default).
 	-oe name	Output pretty printed EBNF to <name>.
 	-p string	Prefix for token names, eg. "_". Default blank.
 	-start name	Select start production name. Default is "SourceFile".
+	-wr		Weight of reduce/reduce conflicts for -m.
+	-ws		Weight of shift/reduce conflicts for -m.
 
 File:
 	A named EBNF file. If no non-opt args are given, ebnf2y reads stdin.
@@ -33,7 +37,6 @@ File:
 Notation
 
 The EBNF flavor is the one used by the Go language specification[1]:
-
 _______________________________________________________________________________
 
 The syntax is specified using Extended Backus-Naur Form (EBNF):

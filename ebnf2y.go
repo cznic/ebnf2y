@@ -377,7 +377,7 @@ func scoreN(s string, a []string) (y int) {
 	return
 }
 
-func score(fn string) (y int) {
+func score(fn string, wr, ws int) (y int) {
 	cmd := exec.Command("go", "tool", "yacc", fn)
 	var yout bytes.Buffer
 	cmd.Stdout = &yout
@@ -387,9 +387,9 @@ func score(fn string) (y int) {
 
 	s := yout.String()
 	a := strings.Split(s, " shift/reduce")
-	y = scoreN(s, a)
+	y = ws * scoreN(s, a)
 	a = strings.Split(s, " reduce/reduce")
-	return y + scoreN(s, a)
+	return y + wr*scoreN(s, a)
 }
 
 func main() {
@@ -401,6 +401,8 @@ func main() {
 	oOut := flag.String("o", "", "Output file. Stdout if left blank.")
 	oPrefix := flag.String("p", "", "Prefix for token names, eg. \"_\". Default blank.")
 	oStart := flag.String("start", "SourceFile", "Start production name.")
+	oWR := flag.Uint("wr", 1, "Weight of reduce/reduce conflicts for -m")
+	oWS := flag.Uint("ws", 1, "Weight of shift/reduce conflicts for -m")
 	flag.Parse()
 
 	if *oMBig {
@@ -555,7 +557,7 @@ magic:
 
 	g0 := j.grm.Normalize()
 	bestName := ""
-	best0 := score(out.Name())
+	best0 := score(out.Name(), int(*oWR), int(*oWS))
 	var best int
 	if best0 <= 0 {
 		goto magic2
@@ -570,7 +572,7 @@ magic:
 
 		j.grm = g1
 		emit()
-		if n := score(out.Name()); n < best {
+		if n := score(out.Name(), int(*oWR), int(*oWS)); n < best {
 			best = n
 			bestName = name
 			if *oMBig {
