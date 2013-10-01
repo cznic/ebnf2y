@@ -40,6 +40,7 @@ func dbg(s string, va ...interface{}) {
 }
 
 type job struct {
+	pkg         string
 	grm         ebnfutil.Grammar
 	rep         *ebnfutil.Report
 	names       map[string]bool
@@ -198,7 +199,7 @@ func (j *job) render(w io.Writer, start string) (err error) {
 // 
 //   [1]: http://github.com/cznic/ebnf2y
 
-package main //%s real package name
+package %s //%s real package name
 
 //%s required only be the demo _dump function
 import (
@@ -215,7 +216,7 @@ import (
 	item interface{} //%s insert real field(s)
 }
 
-`, todo, time.Now(), todo, todo, todo)
+`, todo, time.Now(), j.pkg, todo, todo, todo)
 	j.term2name = map[string]string{}
 	a := []string{}
 	for name := range j.rep.Tokens {
@@ -399,6 +400,7 @@ func main() {
 	oMBig := flag.Bool("M", false, "Like -m and report to stderr.")
 	oOE := flag.String("oe", "", "Pretty print EBNF to <arg> if non blank.")
 	oOut := flag.String("o", "", "Output file. Stdout if left blank.")
+	oPkg := flag.String("pkg", "main", "Package name. Default \"main\".")
 	oPrefix := flag.String("p", "", "Prefix for token names, eg. \"_\". Default blank.")
 	oStart := flag.String("start", "SourceFile", "Start production name.")
 	oWR := flag.Uint("wr", 1, "Weight of reduce/reduce conflicts for -m")
@@ -476,6 +478,7 @@ func main() {
 	}
 
 	j := &job{
+		pkg:     *oPkg,
 		grm:     grm,
 		names:   map[string]bool{},
 		tPrefix: *oPrefix,

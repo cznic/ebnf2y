@@ -27,6 +27,7 @@ Options:
 	-o name		Output file name. Stdout if left blank (default).
 	-oe name	Output pretty printed EBNF to <name>.
 	-p string	Prefix for token names, eg. "_". Default blank.
+	-pkg name	Package name. Default "main".
 	-start name	Select start production name. Default is "SourceFile".
 	-wr		Weight of reduce/reduce conflicts for -m.
 	-ws		Weight of shift/reduce conflicts for -m.

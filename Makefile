@@ -19,7 +19,7 @@ todo:
 
 clean:
 	@go clean
-	rm -f *~ cov cov.html y.output
+	rm -f *~ y.output
 	make -C demo clean
 
 demo:
