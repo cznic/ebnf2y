@@ -86,8 +86,9 @@ func (j *job) checkTerminals(start string) {
 
 func toAscii(s string) string {
 	var r []byte
-	for _, b := range s {
-		if b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' {
+	for i, b := range s {
+		if b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' ||
+			(i > 0 && b >= '0' && b <= '9') {
 			r = append(r, byte(b))
 		}
 	}
