@@ -17,7 +17,7 @@ scanner.go: demo.l
 	golex -o $@ $<
 
 parser.go: demo.y
-	go tool yacc -o $@ $<
+	goyacc -o $@ $<
 
 demo.y: demo.ebnf
 	ebnf2y -start Expression -o $@ $<
