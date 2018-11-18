@@ -1,10 +1,5 @@
-ebnf2y
-======
+`github.com/cznic/ebnf2y` has moved to [`modernc.org/ebnf2y`](https://godoc.org/modernc.org/ebnf2y) ([vcs](https://gitlab.com/cznic/ebnf2y)).
 
-Command ebnf2y converts EBNF grammars into yacc compatible skeleton .y files.
+Please update your import paths to `modernc.org/ebnf2y`.
 
-Installation:
-
-    $ go get github.com/cznic/ebnf2y
-
-Documentation: [http://godoc.org/github.com/cznic/ebnf2y](http://godoc.org/github.com/cznic/ebnf2y)
+This repo is now archived.
